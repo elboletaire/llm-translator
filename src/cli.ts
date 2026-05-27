@@ -215,6 +215,23 @@ function loadCheckpointIfAny(
   return checkpointEntries
 }
 
+function startupInfo(
+  args: CliArgs,
+  entries: number,
+  totalBatches: number,
+): string {
+  const model = args.model ?? "pi default"
+  const provider = args.provider ? ` via ${args.provider}` : ""
+  const resumeNote =
+    entries < totalBatches * args.batchSize ? " (resuming)" : ""
+  return (
+    `pi-translate: ${args.inputFormat} • ` +
+    `${entries} entries • ` +
+    `${totalBatches} batches of ${args.batchSize}${resumeNote} • ` +
+    `model: ${model}${provider}`
+  )
+}
+
 export async function main(
   argv: string[] = process.argv.slice(2),
   partialDeps: Partial<CliDeps> = {},
@@ -249,6 +266,7 @@ export async function main(
     }
 
     const totalBatches = chunks.length
+    deps.stderr.write(startupInfo(args, entries.length, totalBatches) + "\n")
 
     for (const [index, chunk] of chunks.entries()) {
       const currentBatch = index + 1
@@ -301,6 +319,7 @@ export async function main(
     }
 
     const totalBatches = chunks.length
+    deps.stderr.write(startupInfo(args, entries.length, totalBatches) + "\n")
 
     for (const [index, chunk] of chunks.entries()) {
       const currentBatch = index + 1
@@ -315,10 +334,10 @@ export async function main(
         stdinEndToken: args.stdinEndToken,
       })
 
-      chunk.forEach((entry, sentence) => {
+      chunk.forEach((entry, i) => {
         translatedEntries.push({
           key: entry.key,
-          sentence: translatedSentences[sentence],
+          sentence: translatedSentences[i],
           context: entry.context,
         })
       })
@@ -347,6 +366,11 @@ export async function main(
       contentLines = allLines.slice(1)
     }
   }
+
+  const totalPlainBatches = Math.ceil(contentLines.length / args.batchSize)
+  deps.stderr.write(
+    startupInfo(args, contentLines.length, totalPlainBatches) + "\n",
+  )
 
   const translated = await deps.translateBatches({
     lines: contentLines,
