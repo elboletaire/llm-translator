@@ -54,6 +54,12 @@ const defaultDeps: CliDeps = {
   readFile: (path) => fs.readFileSync(path, "utf8"),
 }
 
+function inferInputFormat(inputFile: string): InputFormat {
+  if (inputFile.endsWith(".json")) return "json"
+  if (inputFile.endsWith(".csv")) return "csv3"
+  return "plain"
+}
+
 export function parseArgs(argv: string[]): CliArgs {
   const normalizedArgv = argv[0] === "--" ? argv.slice(1) : argv
 
@@ -69,7 +75,7 @@ export function parseArgs(argv: string[]): CliArgs {
     outputFile,
     setupContext: "",
     batchSize: 50,
-    inputFormat: "plain",
+    inputFormat: inferInputFormat(inputFile),
     timeoutSeconds: 120,
     piCmd: "pi",
     stdinEndToken: "__NEXT_BATCH__",
@@ -109,6 +115,9 @@ export function parseArgs(argv: string[]): CliArgs {
         args.inputFormat = format as InputFormat
         break
       }
+      case "--no-autodetect-format":
+        args.inputFormat = "plain"
+        break
       case "--timeout-seconds": {
         const timeout = Number.parseInt(getValue(), 10)
         if (!Number.isFinite(timeout) || timeout <= 0) {
