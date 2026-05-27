@@ -1,11 +1,12 @@
 import fs from "node:fs"
 
-import { readCsvEntries, readLines, writeCsvEntries, writeLines } from "./io"
+import { isHeaderRow, parseCsvRows, readCsvEntries, readCsvHeader, readLines, writeCsvEntries, writeLines } from "./io"
 import { translateBatches, translateTextUnitsBatch } from "./translator"
 import type { CliArgs, InputFormat, TranslationEntry } from "./types"
 
 interface CliDeps {
   readCsvEntries: typeof readCsvEntries
+  readCsvHeader: typeof readCsvHeader
   writeCsvEntries: typeof writeCsvEntries
   readLines: typeof readLines
   writeLines: typeof writeLines
@@ -19,6 +20,7 @@ interface CliDeps {
 
 const defaultDeps: CliDeps = {
   readCsvEntries,
+  readCsvHeader,
   writeCsvEntries,
   readLines,
   writeLines,
@@ -135,7 +137,7 @@ export function buildPiCommand(
   if (args.apiKey) {
     command.push("--api-key", args.apiKey)
   }
-  command.push("--print")
+  command.push("--no-session", "--print")
   return command
 }
 
@@ -183,6 +185,7 @@ export async function main(
   const command = buildPiCommand(args)
 
   if (args.inputFormat === "csv3") {
+    const csvHeader = deps.readCsvHeader(args.inputFile)
     const entries = deps.readCsvEntries(args.inputFile)
     const checkpointFile = checkpointPath(args.outputFile)
     const tmpFile = tmpOutputPath(args.outputFile)
@@ -224,7 +227,7 @@ export async function main(
       deps.writeCsvEntries(checkpointFile, translatedEntries)
     }
 
-    deps.writeCsvEntries(tmpFile, translatedEntries)
+    deps.writeCsvEntries(tmpFile, translatedEntries, csvHeader)
     deps.replaceSync(tmpFile, args.outputFile)
     if (deps.existsSync(checkpointFile)) {
       deps.removeSync(checkpointFile)
@@ -233,9 +236,20 @@ export async function main(
     return 0
   }
 
-  const lines = deps.readLines(args.inputFile)
+  const allLines = deps.readLines(args.inputFile)
+  let headerLines: string[] = []
+  let contentLines = allLines
+
+  if (allLines.length > 0) {
+    const firstRow = parseCsvRows(allLines[0].replace(/\r?\n$/u, ""))
+    if (firstRow.length > 0 && isHeaderRow(firstRow[0])) {
+      headerLines = [allLines[0]]
+      contentLines = allLines.slice(1)
+    }
+  }
+
   const translated = await deps.translateBatches({
-    lines,
+    lines: contentLines,
     batchSize: args.batchSize,
     setupContext: args.setupContext,
     command,
@@ -245,7 +259,7 @@ export async function main(
       deps.stderr.write(`processing batch ${current}/${total}\n`),
   })
 
-  deps.writeLines(args.outputFile, translated)
+  deps.writeLines(args.outputFile, [...headerLines, ...translated])
   return 0
 }
 

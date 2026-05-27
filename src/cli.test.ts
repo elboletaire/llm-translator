@@ -51,6 +51,7 @@ describe("build command", () => {
       "openai",
       "--model",
       "gpt-5.4",
+      "--no-session",
       "--print",
     ])
   })
@@ -69,6 +70,7 @@ describe("build command", () => {
       "openai/gpt-5.4",
       "--api-key",
       "abc123",
+      "--no-session",
       "--print",
     ])
   })
@@ -240,5 +242,92 @@ describe("main orchestration", () => {
 
     expect(exitCode).toBe(0)
     expect(batchSizes).toEqual([2, 2, 1])
+  })
+
+  it("preserves csv header row in csv3 mode", async () => {
+    const dir = makeTempDir()
+    const inputFile = path.join(dir, "in.csv")
+    const outputFile = path.join(dir, "out.csv")
+
+    const header = "ID,Text,Comment\n"
+    const sourceEntries: TranslationEntry[] = [
+      { key: "k1", sentence: "s1", context: "c1" },
+      { key: "k2", sentence: "s2", context: "c2" },
+    ]
+    fs.writeFileSync(inputFile, header + serializeCsvEntries(sourceEntries), "utf8")
+
+    const exitCode = await main(
+      [inputFile, outputFile, "--setup-context", "ctx", "--input-format", "csv3"],
+      {
+        stderr: new StringWritable(),
+        translateTextUnitsBatch: async ({ entries }) =>
+          entries.map((entry) => `t-${entry.key}`),
+      },
+    )
+
+    expect(exitCode).toBe(0)
+    const content = fs.readFileSync(outputFile, "utf8")
+    expect(content).toMatch(/^ID,Text,Comment\n/u)
+    const outEntries = parseCsvEntries(content)
+    expect(outEntries).toHaveLength(2)
+    expect(outEntries[0]).toEqual({ key: "k1", sentence: "t-k1", context: "c1" })
+  })
+
+  it("preserves csv header row in plain mode", async () => {
+    const dir = makeTempDir()
+    const inputFile = path.join(dir, "in.csv")
+    const outputFile = path.join(dir, "out.csv")
+
+    fs.writeFileSync(
+      inputFile,
+      "ID,Text,Comment\nk1,sentence one,ctx one\nk2,sentence two,ctx two\n",
+      "utf8",
+    )
+
+    const seenLines: string[][] = []
+    const exitCode = await main(
+      [inputFile, outputFile, "--setup-context", "ctx"],
+      {
+        stderr: new StringWritable(),
+        translateBatches: async ({ lines }) => {
+          seenLines.push([...lines])
+          return lines.map((l) => l.replace("sentence", "translated"))
+        },
+      },
+    )
+
+    expect(exitCode).toBe(0)
+    // Header must NOT be sent to the LLM
+    expect(seenLines[0]).not.toContainEqual(expect.stringContaining("ID,Text"))
+    // Header must appear as first line of output
+    const content = fs.readFileSync(outputFile, "utf8")
+    expect(content).toMatch(/^ID,Text,Comment\n/u)
+    expect(content).toContain("translated")
+  })
+
+  it("strips markdown fences from plain mode llm output", async () => {
+    const dir = makeTempDir()
+    const inputFile = path.join(dir, "in.txt")
+    const outputFile = path.join(dir, "out.txt")
+    fs.writeFileSync(inputFile, "line one\nline two\n", "utf8")
+
+    const exitCode = await main(
+      [inputFile, outputFile, "--setup-context", "ctx"],
+      {
+        stderr: new StringWritable(),
+        translateBatches: async () => {
+          // Simulate LLM wrapping output in a code fence
+          const raw = "```\nline one\nline two\n```\n"
+          const { splitKeepNewlines, stripMarkdownFences } = await import("./io")
+          return splitKeepNewlines(stripMarkdownFences(raw))
+        },
+      },
+    )
+
+    expect(exitCode).toBe(0)
+    const content = fs.readFileSync(outputFile, "utf8")
+    expect(content).not.toContain("```")
+    expect(content).toContain("line one")
+    expect(content).toContain("line two")
   })
 })

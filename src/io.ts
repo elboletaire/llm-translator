@@ -2,6 +2,27 @@ import fs from "node:fs"
 
 import type { TranslationEntry } from "./types"
 
+export function isHeaderRow(row: string[]): boolean {
+  if (row.length < 2) {
+    return false
+  }
+  const first = row[0].trim().toLowerCase()
+  const second = row[1].trim().toLowerCase()
+  return (
+    new Set(["key", "id"]).has(first) &&
+    new Set(["sentence", "translation", "text", "value"]).has(second)
+  )
+}
+
+export function stripMarkdownFences(text: string): string {
+  if (!text.startsWith("```")) {
+    return text
+  }
+  return text
+    .replace(/^```[a-zA-Z]*\n/u, "")
+    .replace(/\n```\s*\n?$/u, "")
+}
+
 export function splitKeepNewlines(text: string): string[] {
   if (!text) {
     return []
@@ -77,8 +98,9 @@ export function parseCsvRows(csvText: string): string[][] {
 
 export function parseCsvEntries(csvText: string): TranslationEntry[] {
   const rows = parseCsvRows(csvText)
+  const startIndex = rows.length > 0 && isHeaderRow(rows[0]) ? 1 : 0
   const entries: TranslationEntry[] = []
-  for (const row of rows) {
+  for (const row of rows.slice(startIndex)) {
     if (row.length < 2) {
       throw new Error("CSV row must contain at least key and sentence columns")
     }
@@ -113,11 +135,21 @@ export function readCsvEntries(path: string): TranslationEntry[] {
   return parseCsvEntries(content)
 }
 
+export function readCsvHeader(path: string): string[] | null {
+  const content = fs.readFileSync(path, "utf8")
+  const rows = parseCsvRows(content)
+  return rows.length > 0 && isHeaderRow(rows[0]) ? rows[0] : null
+}
+
 export function writeCsvEntries(
   path: string,
   entries: TranslationEntry[],
+  header?: string[] | null,
 ): void {
-  fs.writeFileSync(path, serializeCsvEntries(entries), "utf8")
+  const headerLine = header
+    ? `${header.map(escapeCsvCell).join(",")}\n`
+    : ""
+  fs.writeFileSync(path, headerLine + serializeCsvEntries(entries), "utf8")
 }
 
 export function readLines(path: string): string[] {

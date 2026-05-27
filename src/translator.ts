@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process"
 import readline from "node:readline"
 
-import { parseCsvRows, splitKeepNewlines } from "./io"
+import { isHeaderRow, parseCsvRows, splitKeepNewlines, stripMarkdownFences } from "./io"
 import type { TranslationEntry } from "./types"
 
 export interface ExchangeIo {
@@ -90,7 +90,7 @@ export async function translateBatches(params: {
       io,
       stdinEndToken,
     })
-    translated.push(...splitKeepNewlines(rawOutput))
+    translated.push(...splitKeepNewlines(stripMarkdownFences(rawOutput)))
   }
 
   return translated
@@ -322,11 +322,7 @@ function parseCsvOutput(text: string): unknown[] {
       continue
     }
 
-    const first = rows[0].map((cell) => cell.trim().toLowerCase())
-    const hasHeader =
-      first.length >= 2 &&
-      new Set(["key", "id"]).has(first[0]) &&
-      new Set(["sentence", "translation", "text", "value"]).has(first[1])
+    const hasHeader = isHeaderRow(rows[0])
 
     const bodyRows = hasHeader ? rows.slice(1) : rows
     if (bodyRows.length === 0 || bodyRows.some((row) => row.length < 2)) {

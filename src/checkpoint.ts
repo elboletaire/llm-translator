@@ -47,11 +47,12 @@ export function writeCheckpoint(
 export function finalizeCsvOutput(
   outputFile: string,
   entries: TranslationEntry[],
+  header?: string[] | null,
 ): void {
   const tmpFile = tmpOutputPath(outputFile)
   const checkpointFile = checkpointPath(outputFile)
 
-  writeCsvEntries(tmpFile, entries)
+  writeCsvEntries(tmpFile, entries, header)
   fs.renameSync(tmpFile, outputFile)
 
   if (fs.existsSync(checkpointFile)) {
