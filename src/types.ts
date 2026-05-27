@@ -10,6 +10,7 @@ export interface CliArgs {
   inputFile: string
   outputFile: string
   setupContext: string
+  setupContextFile?: string
   batchSize: number
   inputFormat: InputFormat
   timeoutSeconds: number

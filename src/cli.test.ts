@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest"
 
 import { buildPiCommand, main, parseArgs } from "./cli"
 import { flattenJson, parseCsvEntries, serializeCsvEntries } from "./io"
+import { translateBatches } from "./translator"
 import type { TranslationEntry } from "./types"
 
 class StringWritable extends Writable {
@@ -136,6 +137,36 @@ describe("parse args", () => {
         "invalid",
       ]),
     ).toThrow("--input-format must be one of: plain, csv3, json")
+  })
+
+  it("rejects when neither --setup-context nor --setup-context-file are given", () => {
+    expect(() => parseArgs(["in.json", "out.json"])).toThrow(
+      "--setup-context or --setup-context-file is required",
+    )
+  })
+
+  it("accepts --setup-context-file and stores the path", () => {
+    const args = parseArgs([
+      "input.json",
+      "output.json",
+      "--setup-context-file",
+      "/some/context.md",
+    ])
+    expect(args.setupContextFile).toBe("/some/context.md")
+    expect(args.setupContext).toBe("")
+  })
+
+  it("rejects when both --setup-context and --setup-context-file are given", () => {
+    expect(() =>
+      parseArgs([
+        "input.json",
+        "output.json",
+        "--setup-context",
+        "ctx",
+        "--setup-context-file",
+        "/some/context.md",
+      ]),
+    ).toThrow("--setup-context and --setup-context-file are mutually exclusive")
   })
 })
 
@@ -370,6 +401,45 @@ describe("main orchestration", () => {
     expect(content).not.toContain("```")
     expect(content).toContain("line one")
     expect(content).toContain("line two")
+  })
+})
+
+describe("main orchestration - setup context file", () => {
+  it("reads setup context from file when --setup-context-file is given", async () => {
+    const dir = makeTempDir()
+    const inputFile = path.join(dir, "input.txt")
+    const outputFile = path.join(dir, "output.txt")
+    const contextFile = path.join(dir, "context.md")
+    fs.writeFileSync(inputFile, "hello\n", "utf8")
+    fs.writeFileSync(contextFile, "Translate to German", "utf8")
+
+    let capturedSetupContext = ""
+    const stderr = new StringWritable()
+
+    const fakeBatches: typeof translateBatches = async (opts) => {
+      capturedSetupContext = opts.setupContext
+      return ["hallo\n"]
+    }
+
+    await main([inputFile, outputFile, "--setup-context-file", contextFile], {
+      stderr,
+      translateBatches: fakeBatches,
+    })
+
+    expect(capturedSetupContext).toBe("Translate to German")
+  })
+
+  it("throws when --setup-context-file points to an empty file", async () => {
+    const dir = makeTempDir()
+    const inputFile = path.join(dir, "input.txt")
+    const outputFile = path.join(dir, "output.txt")
+    const contextFile = path.join(dir, "context.md")
+    fs.writeFileSync(inputFile, "hello\n", "utf8")
+    fs.writeFileSync(contextFile, "   \n", "utf8")
+
+    await expect(
+      main([inputFile, outputFile, "--setup-context-file", contextFile]),
+    ).rejects.toThrow("file is empty")
   })
 })
 

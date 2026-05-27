@@ -32,6 +32,7 @@ interface CliDeps {
   replaceSync: typeof fs.renameSync
   removeSync: typeof fs.unlinkSync
   stderr: Pick<NodeJS.WritableStream, "write">
+  readFile: (path: string) => string
 }
 
 const defaultDeps: CliDeps = {
@@ -50,6 +51,7 @@ const defaultDeps: CliDeps = {
   replaceSync: fs.renameSync,
   removeSync: fs.unlinkSync,
   stderr: process.stderr,
+  readFile: (path) => fs.readFileSync(path, "utf8"),
 }
 
 export function parseArgs(argv: string[]): CliArgs {
@@ -57,7 +59,7 @@ export function parseArgs(argv: string[]): CliArgs {
 
   if (normalizedArgv.length < 2) {
     throw new Error(
-      "Usage: pi-translator <input_file> <output_file> --setup-context <text> [options]",
+      "Usage: pi-translator <input_file> <output_file> --setup-context <text>|--setup-context-file <path> [options]",
     )
   }
 
@@ -87,6 +89,9 @@ export function parseArgs(argv: string[]): CliArgs {
     switch (flag) {
       case "--setup-context":
         args.setupContext = getValue()
+        break
+      case "--setup-context-file":
+        args.setupContextFile = getValue()
         break
       case "--batch-size": {
         const batchSize = Number.parseInt(getValue(), 10)
@@ -133,8 +138,13 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
-  if (!args.setupContext) {
-    throw new Error("--setup-context is required")
+  if (args.setupContext && args.setupContextFile) {
+    throw new Error(
+      "--setup-context and --setup-context-file are mutually exclusive",
+    )
+  }
+  if (!args.setupContext && !args.setupContextFile) {
+    throw new Error("--setup-context or --setup-context-file is required")
   }
 
   return args
@@ -202,6 +212,14 @@ export async function main(
 ): Promise<number> {
   const deps: CliDeps = { ...defaultDeps, ...partialDeps }
   const args = parseArgs(argv)
+  if (args.setupContextFile) {
+    args.setupContext = deps.readFile(args.setupContextFile)
+    if (!args.setupContext.trim()) {
+      throw new Error(
+        `--setup-context-file: file is empty: ${args.setupContextFile}`,
+      )
+    }
+  }
   const command = buildPiCommand(args)
 
   if (args.inputFormat === "csv3") {
