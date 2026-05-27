@@ -174,7 +174,7 @@ export function flattenJson(
         entries.push({
           key: prefix ? `${prefix}.${index}` : String(index),
           sentence: item,
-          context: prefix || "",
+          context: "",
         })
       } else if (Array.isArray(item) || typeof item === "object") {
         // Recurse into nested arrays/objects
@@ -190,7 +190,7 @@ export function flattenJson(
         entries.push({
           key: prefix ? `${prefix}.${key}` : key,
           sentence: value,
-          context: prefix || "",
+          context: "",
         })
       } else if (Array.isArray(value) || typeof value === "object") {
         // Recurse into nested structures

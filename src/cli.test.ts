@@ -549,7 +549,7 @@ describe("main orchestration - json format", () => {
 
     // Pre-create checkpoint with first entry already translated
     const checkpointEntries = [
-      { key: "actions.cancel", sentence: "Annuler", context: "actions" },
+      { key: "actions.cancel", sentence: "Annuler", context: "" },
     ]
     fs.writeFileSync(
       checkpointFile,

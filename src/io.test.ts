@@ -160,8 +160,8 @@ describe("flattenJson", () => {
     const obj = { actions: { cancel: "Cancel", end: "End" } }
     const entries = flattenJson(obj)
     expect(entries).toEqual([
-      { key: "actions.cancel", sentence: "Cancel", context: "actions" },
-      { key: "actions.end", sentence: "End", context: "actions" },
+      { key: "actions.cancel", sentence: "Cancel", context: "" },
+      { key: "actions.end", sentence: "End", context: "" },
     ])
   })
 
@@ -175,17 +175,15 @@ describe("flattenJson", () => {
     const obj = { items: ["first", "second"] }
     const entries = flattenJson(obj)
     expect(entries).toEqual([
-      { key: "items.0", sentence: "first", context: "items" },
-      { key: "items.1", sentence: "second", context: "items" },
+      { key: "items.0", sentence: "first", context: "" },
+      { key: "items.1", sentence: "second", context: "" },
     ])
   })
 
   it("handles deeply nested structures", () => {
     const obj = { a: { b: { c: "deep" } } }
     const entries = flattenJson(obj)
-    expect(entries).toEqual([
-      { key: "a.b.c", sentence: "deep", context: "a.b" },
-    ])
+    expect(entries).toEqual([{ key: "a.b.c", sentence: "deep", context: "" }])
   })
 
   it("handles empty object", () => {
@@ -210,9 +208,9 @@ describe("flattenJson", () => {
     }
     const entries = flattenJson(obj)
     expect(entries).toEqual([
-      { key: "actions.0", sentence: "start", context: "actions" },
-      { key: "actions.1", sentence: "stop", context: "actions" },
-      { key: "config.label", sentence: "Config", context: "config" },
+      { key: "actions.0", sentence: "start", context: "" },
+      { key: "actions.1", sentence: "stop", context: "" },
+      { key: "config.label", sentence: "Config", context: "" },
     ])
   })
 })
@@ -221,8 +219,8 @@ describe("unflattenJson", () => {
   it("restores original shape and values from translations", () => {
     const original = { actions: { cancel: "Cancel", end: "End" } }
     const translations = [
-      { key: "actions.cancel", sentence: "Annuler", context: "actions" },
-      { key: "actions.end", sentence: "Terminer", context: "actions" },
+      { key: "actions.cancel", sentence: "Annuler", context: "" },
+      { key: "actions.end", sentence: "Terminer", context: "" },
     ]
     const result = unflattenJson(original, translations)
     expect(result).toEqual({ actions: { cancel: "Annuler", end: "Terminer" } })
@@ -252,8 +250,8 @@ describe("unflattenJson", () => {
   it("handles arrays with numeric indices", () => {
     const original = { items: ["first", "second"] }
     const translations = [
-      { key: "items.0", sentence: "premier", context: "items" },
-      { key: "items.1", sentence: "deuxième", context: "items" },
+      { key: "items.0", sentence: "premier", context: "" },
+      { key: "items.1", sentence: "deuxième", context: "" },
     ]
     const result = unflattenJson(original, translations)
     expect(result).toEqual({ items: ["premier", "deuxième"] })
@@ -261,7 +259,7 @@ describe("unflattenJson", () => {
 
   it("handles deeply nested structures", () => {
     const original = { a: { b: { c: "deep" } } }
-    const translations = [{ key: "a.b.c", sentence: "profond", context: "a.b" }]
+    const translations = [{ key: "a.b.c", sentence: "profond", context: "" }]
     const result = unflattenJson(original, translations)
     expect(result).toEqual({ a: { b: { c: "profond" } } })
   })
@@ -272,8 +270,8 @@ describe("unflattenJson", () => {
       config: { enabled: true, label: "Config" },
     }
     const translations = [
-      { key: "actions.0", sentence: "démarrer", context: "actions" },
-      { key: "config.label", sentence: "Configuration", context: "config" },
+      { key: "actions.0", sentence: "démarrer", context: "" },
+      { key: "config.label", sentence: "Configuration", context: "" },
     ]
     const result = unflattenJson(original, translations)
     expect(result).toEqual({
