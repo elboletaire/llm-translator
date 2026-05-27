@@ -212,53 +212,74 @@ function parseBatchOutput(text: string): unknown[] {
   }
 }
 
+function repairJsonQuotes(text: string): string | null {
+  let s = text
+  for (let pass = 0; pass < 50; pass += 1) {
+    try {
+      JSON.parse(s)
+      return s
+    } catch (err) {
+      if (!(err instanceof SyntaxError)) return null
+      const posMatch = /position (\d+)/i.exec(err.message)
+      if (!posMatch) return null
+      const errPos = Number.parseInt(posMatch[1], 10)
+      // scan backward for the last unescaped " before the error position
+      let pos = errPos - 1
+      while (pos >= 0) {
+        if (s[pos] === '"' && (pos === 0 || s[pos - 1] !== "\\")) break
+        pos -= 1
+      }
+      if (pos < 0) return null
+      s = s.slice(0, pos) + '\\"' + s.slice(pos + 1)
+    }
+  }
+  return null
+}
+
+function tryParseArray(candidate: string): unknown[] | null {
+  try {
+    const parsed = JSON.parse(candidate)
+    if (Array.isArray(parsed)) return parsed
+  } catch {
+    // try repair
+  }
+  const repaired = repairJsonQuotes(candidate)
+  if (repaired) {
+    try {
+      const parsed = JSON.parse(repaired)
+      if (Array.isArray(parsed)) return parsed
+    } catch {
+      // give up
+    }
+  }
+  return null
+}
+
 function parseJsonArrayOutput(text: string): unknown[] {
   const raw = text.trim()
   if (!raw) {
     throw new Error("model returned empty output")
   }
 
-  try {
-    const parsed = JSON.parse(raw)
-    if (Array.isArray(parsed)) {
-      return parsed
-    }
-  } catch {
-    // continue recovery
+  {
+    const result = tryParseArray(raw)
+    if (result) return result
   }
 
   const fencedPattern = /```(?:json)?\s*([\s\S]*?)\s*```/giu
   for (const match of raw.matchAll(fencedPattern)) {
     const block = match[1]?.trim()
-    if (!block) {
-      continue
-    }
-    try {
-      const parsed = JSON.parse(block)
-      if (Array.isArray(parsed)) {
-        return parsed
-      }
-    } catch {
-      // continue scanning
-    }
+    if (!block) continue
+    const result = tryParseArray(block)
+    if (result) return result
   }
 
   for (let index = 0; index < raw.length; index += 1) {
-    if (raw[index] !== "[") {
-      continue
-    }
+    if (raw[index] !== "[") continue
     const candidate = extractBalancedArray(raw, index)
-    if (!candidate) {
-      continue
-    }
-    try {
-      const parsed = JSON.parse(candidate)
-      if (Array.isArray(parsed)) {
-        return parsed
-      }
-    } catch {
-      // continue scanning
-    }
+    if (!candidate) continue
+    const result = tryParseArray(candidate)
+    if (result) return result
   }
 
   const preview = raw.slice(0, 200).replaceAll("\n", "\\n")
