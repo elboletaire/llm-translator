@@ -697,3 +697,95 @@ describe("main orchestration - review mode", () => {
     ).rejects.toThrow("requires an existing output file")
   })
 })
+
+describe("main orchestration - missing mode", () => {
+  it("json: skips already-translated entries and fills gaps", async () => {
+    const dir = makeTempDir()
+    const inputFile = path.join(dir, "in.json")
+    const outputFile = path.join(dir, "out.json")
+
+    fs.writeFileSync(
+      inputFile,
+      JSON.stringify({
+        a: "Hello",
+        b: "World",
+        c: "Goodbye",
+      }),
+      "utf8",
+    )
+    fs.writeFileSync(
+      outputFile,
+      JSON.stringify({
+        a: "",
+        b: "Welt",
+        c: "",
+      }),
+      "utf8",
+    )
+
+    const translated: string[][] = []
+    await main(
+      [inputFile, outputFile, "--setup-context", "ctx", "--mode", "missing"],
+      {
+        stderr: new StringWritable(),
+        translateTextUnitsBatch: async ({ entries }) => {
+          translated.push(entries.map((e) => e.key))
+          return entries.map((e) => `tr-${e.key}`)
+        },
+      },
+    )
+
+    expect(translated.flat()).toEqual(["a", "c"])
+    const result = JSON.parse(fs.readFileSync(outputFile, "utf8"))
+    expect(result).toEqual({ a: "tr-a", b: "Welt", c: "tr-c" })
+  })
+
+  it("json: works when output file does not exist (translates everything)", async () => {
+    const dir = makeTempDir()
+    const inputFile = path.join(dir, "in.json")
+    const outputFile = path.join(dir, "out.json")
+    fs.writeFileSync(inputFile, JSON.stringify({ x: "Translate me" }), "utf8")
+
+    await main(
+      [inputFile, outputFile, "--setup-context", "ctx", "--mode", "missing"],
+      {
+        stderr: new StringWritable(),
+        translateTextUnitsBatch: async ({ entries }) =>
+          entries.map(() => "translated"),
+      },
+    )
+
+    const result = JSON.parse(fs.readFileSync(outputFile, "utf8"))
+    expect(result).toEqual({ x: "translated" })
+  })
+
+  it("parseArgs: accepts --mode missing", () => {
+    const args = parseArgs([
+      "in.json",
+      "out.json",
+      "--setup-context",
+      "ctx",
+      "--mode",
+      "missing",
+    ])
+    expect(args.mode).toBe("missing")
+  })
+
+  it("parseArgs: rejects unknown mode", () => {
+    expect(() =>
+      parseArgs([
+        "in.json",
+        "out.json",
+        "--setup-context",
+        "ctx",
+        "--mode",
+        "bogus",
+      ]),
+    ).toThrow("--mode must be one of")
+  })
+
+  it("parseArgs: defaults mode to translate", () => {
+    const args = parseArgs(["in.json", "out.json", "--setup-context", "ctx"])
+    expect(args.mode).toBe("translate")
+  })
+})

@@ -5,6 +5,7 @@ export interface TranslationEntry {
 }
 
 export type InputFormat = "plain" | "csv3" | "json"
+export type TranslationMode = "translate" | "missing" | "review"
 
 export interface CliArgs {
   inputFile: string
@@ -13,6 +14,7 @@ export interface CliArgs {
   setupContextFile?: string
   batchSize: number
   inputFormat: InputFormat
+  mode: TranslationMode
   timeoutSeconds: number
   piCmd: string
   provider?: string
