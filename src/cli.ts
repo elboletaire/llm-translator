@@ -18,7 +18,12 @@ import {
   translateTextUnitsBatch,
   translateTextUnitsBatchReview,
 } from "./translator"
-import type { CliArgs, InputFormat, TranslationEntry } from "./types"
+import type {
+  CliArgs,
+  InputFormat,
+  TranslationEntry,
+  TranslationMode,
+} from "./types"
 
 interface CliDeps {
   flattenJson: typeof flattenJson
@@ -120,14 +125,6 @@ export function parseArgs(argv: string[]): CliArgs {
           throw new Error("--input-format must be one of: plain, csv3, json")
         }
         args.inputFormat = format as InputFormat
-        break
-      }
-      case "--mode": {
-        const m = getValue()
-        if (m !== "translate" && m !== "missing" && m !== "review") {
-          throw new Error("--mode must be one of: translate, missing, review")
-        }
-        args.mode = m as TranslationMode
         break
       }
       case "--mode": {
@@ -635,14 +632,14 @@ async function runReviewPlain(
     )
   }
 
-  const allInputLines = deps.readLines(args.inputFile)
-  let inputHeader: string[] = []
-  let inputLines = allInputLines
-  if (allInputLines.length > 0) {
-    const firstRow = parseCsvRows(allInputLines[0].replace(/\r?\n$/u, ""))
+  const allOutputLines = deps.readLines(args.outputFile)
+  let outputHeader: string[] = []
+  let outputLines = allOutputLines
+  if (allOutputLines.length > 0) {
+    const firstRow = parseCsvRows(allOutputLines[0].replace(/\r?\n$/u, ""))
     if (firstRow.length > 0 && isHeaderRow(firstRow[0])) {
-      inputHeader = [allInputLines[0]]
-      inputLines = allInputLines.slice(1)
+      outputHeader = [allOutputLines[0]]
+      outputLines = allOutputLines.slice(1)
     }
   }
 
@@ -653,11 +650,11 @@ async function runReviewPlain(
     "Return the same line unchanged if it is acceptable.\n\n" +
     args.setupContext
 
-  const totalBatches = Math.ceil(inputLines.length / args.batchSize)
-  deps.stderr.write(startupInfo(args, inputLines.length, totalBatches) + "\n")
+  const totalBatches = Math.ceil(outputLines.length / args.batchSize)
+  deps.stderr.write(startupInfo(args, outputLines.length, totalBatches) + "\n")
 
   const reviewed = await deps.translateBatches({
-    lines: inputLines,
+    lines: outputLines,
     batchSize: args.batchSize,
     setupContext: reviewContext,
     command,
@@ -667,7 +664,7 @@ async function runReviewPlain(
       deps.stderr.write(`processing batch ${current}/${total}\n`),
   })
 
-  deps.writeLines(args.outputFile, [...inputHeader, ...reviewed])
+  deps.writeLines(args.outputFile, [...outputHeader, ...reviewed])
   return 0
 }
 
