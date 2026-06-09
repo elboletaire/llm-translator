@@ -243,6 +243,60 @@ describe("translation engine", () => {
     expect(translated).toEqual(["t1", "t2"])
   })
 
+  it("accepts object items with current field (review mode response)", async () => {
+    const translated = await translateTextUnitsBatch({
+      entries: [
+        { key: "k1", sentence: "s1", context: "c1" },
+        { key: "k2", sentence: "s2", context: "c2" },
+      ],
+      setupContext: "ctx",
+      command: ["pi"],
+      timeoutSeconds: 30,
+      batchIndex: 1,
+      totalBatches: 1,
+      exchange: async () =>
+        '[{"key":"k1","original":"s1","current":"t1"},{"key":"k2","original":"s2","current":"t2"}]\n',
+    })
+
+    expect(translated).toEqual(["t1", "t2"])
+  })
+
+  it("accepts object items with reviewed field (review mode response)", async () => {
+    const translated = await translateTextUnitsBatch({
+      entries: [
+        { key: "k1", sentence: "s1", context: "c1" },
+        { key: "k2", sentence: "s2", context: "c2" },
+      ],
+      setupContext: "ctx",
+      command: ["pi"],
+      timeoutSeconds: 30,
+      batchIndex: 1,
+      totalBatches: 1,
+      exchange: async () =>
+        '[{"key":"k1","original":"s1","reviewed":"t1"},{"key":"k2","original":"s2","reviewed":"t2"}]\n',
+    })
+
+    expect(translated).toEqual(["t1", "t2"])
+  })
+
+  it("accepts object items with unknown field name via fallback", async () => {
+    const translated = await translateTextUnitsBatch({
+      entries: [
+        { key: "k1", sentence: "s1", context: "c1" },
+        { key: "k2", sentence: "s2", context: "c2" },
+      ],
+      setupContext: "ctx",
+      command: ["pi"],
+      timeoutSeconds: 30,
+      batchIndex: 1,
+      totalBatches: 1,
+      exchange: async () =>
+        '[{"key":"k1","original":"s1","result":"t1"},{"key":"k2","original":"s2","result":"t2"}]\n',
+    })
+
+    expect(translated).toEqual(["t1", "t2"])
+  })
+
   it("includes raw output in type errors", async () => {
     await expect(
       translateTextUnitsBatch({

@@ -71,12 +71,78 @@ function inferInputFormat(inputFile: string): InputFormat {
   return "plain"
 }
 
+export const HELP_TEXT = `
+Usage: pi-translator <input_file> <output_file> [options]
+
+Batch translator for large files using \`pi\`.
+
+Arguments:
+  input_file                       Input file to translate (plain text, CSV, or JSON)
+  output_file                      Output file to write translations to
+
+Options:
+  --setup-context <text>           Translation instructions sent to the model on every
+                                   batch (required unless --setup-context-file is given)
+  --setup-context-file <path>      Path to a file containing the translation setup context
+                                   (required unless --setup-context is given)
+  --batch-size <n>                 Number of lines/entries per batch (default: 50)
+  --input-format <format>          Input file format: plain, csv3, json
+                                   (default: auto-detected from extension; falls back to plain)
+  --mode <mode>                    Translation mode (default: translate):
+                                     translate  Translate all entries from scratch
+                                     missing    Only translate entries missing in the output
+                                     review     Review and improve an existing translation
+  --timeout-seconds <n>            Timeout in seconds for each pi call (default: 120)
+  --pi-cmd <cmd>                   Command used to invoke pi (default: pi)
+  --pi-mono-cmd <cmd>              Alias for --pi-cmd
+  --provider <id>                  Provider ID passed to pi
+                                   (e.g. openai, github-copilot)
+  --model <id>                     Model ID passed to pi
+                                   (e.g. gpt-5.4, claude-sonnet-4.5)
+  --api-key <key>                  API key passed to pi
+  --stdin-end-token <token>        Token that signals end of model response when using
+                                   --provider stdout (default: __NEXT_BATCH__)
+  --max-retries <n>                Number of times to retry a failed batch before aborting
+                                   (default: 2)
+  -h, --help                       Display this help message
+
+Examples:
+  pi-translator input.txt output.txt \\
+    --setup-context "Translate from Spanish to English. Keep character names unchanged." \\
+    --provider openai --model gpt-5.4 --batch-size 40
+
+  pi-translator input.csv output.csv \\
+    --input-format csv3 \\
+    --setup-context "Translate column 2 to English. Keep key and context untouched." \\
+    --mode missing --provider github-copilot --model claude-sonnet-4.5
+
+  pi-translator input.json output.json \\
+    --setup-context-file context.md \\
+    --mode review --timeout-seconds 180
+
+  pi-translator input.csv output.csv \\
+    --input-format csv3 --provider stdout \\
+    --stdin-end-token "<NEXT>" \\
+    --setup-context "$(cat context.md)"
+`.trimStart()
+
+export class HelpRequestedError extends Error {
+  constructor() {
+    super("help requested")
+    this.name = "HelpRequestedError"
+  }
+}
+
 export function parseArgs(argv: string[]): CliArgs {
   const normalizedArgv = argv[0] === "--" ? argv.slice(1) : argv
 
+  if (normalizedArgv.includes("--help") || normalizedArgv.includes("-h")) {
+    throw new HelpRequestedError()
+  }
+
   if (normalizedArgv.length < 2) {
     throw new Error(
-      "Usage: pi-translator <input_file> <output_file> --setup-context <text>|--setup-context-file <path> [options]",
+      "Usage: pi-translator <input_file> <output_file> --setup-context <text>|--setup-context-file <path> [options]\nRun with --help for full usage information.",
     )
   }
 
@@ -91,6 +157,7 @@ export function parseArgs(argv: string[]): CliArgs {
     timeoutSeconds: 120,
     piCmd: "pi",
     stdinEndToken: "__NEXT_BATCH__",
+    maxRetries: 2,
   }
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -162,6 +229,14 @@ export function parseArgs(argv: string[]): CliArgs {
       case "--stdin-end-token":
         args.stdinEndToken = getValue()
         break
+      case "--max-retries": {
+        const retries = Number.parseInt(getValue(), 10)
+        if (!Number.isFinite(retries) || retries < 0) {
+          throw new Error("--max-retries must be a non-negative integer")
+        }
+        args.maxRetries = retries
+        break
+      }
       default:
         throw new Error(`Unknown argument: ${flag}`)
     }
@@ -239,16 +314,16 @@ function startupInfo(
   args: CliArgs,
   entries: number,
   totalBatches: number,
+  resuming: boolean,
 ): string {
   const model = args.model ?? "pi default"
   const provider = args.provider ? ` via ${args.provider}` : ""
   const modeNote = args.mode !== "translate" ? ` [${args.mode}]` : ""
-  const resumeNote =
-    entries < totalBatches * args.batchSize ? " (resuming)" : ""
+  const resumeNote = resuming ? " (resuming)" : ""
   return (
     `pi-translate: ${args.inputFormat}${modeNote} • ` +
     `${entries} entries • ` +
-    `${totalBatches} batches of ${args.batchSize}${resumeNote} • ` +
+    `${totalBatches} batches × ${args.batchSize}${resumeNote} • ` +
     `model: ${model}${provider}`
   )
 }
@@ -311,7 +386,14 @@ async function runMissingJson(
 
   const chunks = chunkEntries(remaining, args.batchSize)
   const totalBatches = chunks.length
-  deps.stderr.write(startupInfo(args, toTranslate.length, totalBatches) + "\n")
+  deps.stderr.write(
+    startupInfo(
+      args,
+      toTranslate.length,
+      Math.ceil(toTranslate.length / args.batchSize),
+      checkpointEntries.length > 0,
+    ) + "\n",
+  )
 
   for (const [index, chunk] of chunks.entries()) {
     const currentBatch = index + 1
@@ -324,6 +406,11 @@ async function runMissingJson(
       batchIndex: currentBatch,
       totalBatches,
       stdinEndToken: args.stdinEndToken,
+      maxRetries: args.maxRetries,
+      onRetry: (attempt, error) =>
+        deps.stderr.write(
+          `  batch ${currentBatch} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+        ),
     })
     chunk.forEach((entry, i) => {
       const translated = {
@@ -383,7 +470,14 @@ async function runMissingCsv3(
 
   const chunks = chunkEntries(remaining, args.batchSize)
   const totalBatches = chunks.length
-  deps.stderr.write(startupInfo(args, toTranslate.length, totalBatches) + "\n")
+  deps.stderr.write(
+    startupInfo(
+      args,
+      toTranslate.length,
+      Math.ceil(toTranslate.length / args.batchSize),
+      checkpointEntries.length > 0,
+    ) + "\n",
+  )
 
   for (const [index, chunk] of chunks.entries()) {
     const currentBatch = index + 1
@@ -396,6 +490,11 @@ async function runMissingCsv3(
       batchIndex: currentBatch,
       totalBatches,
       stdinEndToken: args.stdinEndToken,
+      maxRetries: args.maxRetries,
+      onRetry: (attempt, error) =>
+        deps.stderr.write(
+          `  batch ${currentBatch} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+        ),
     })
     chunk.forEach((entry, i) => {
       const translated = {
@@ -459,7 +558,9 @@ async function runMissingPlain(
 
   const missingLines = missingIndices.map((i) => inputLines[i])
   const totalBatches = Math.ceil(missingLines.length / args.batchSize)
-  deps.stderr.write(startupInfo(args, missingLines.length, totalBatches) + "\n")
+  deps.stderr.write(
+    startupInfo(args, missingLines.length, totalBatches, false) + "\n",
+  )
 
   const translatedMissing = await deps.translateBatches({
     lines: missingLines,
@@ -468,6 +569,11 @@ async function runMissingPlain(
     command,
     timeoutSeconds: args.timeoutSeconds,
     stdinEndToken: args.stdinEndToken,
+    maxRetries: args.maxRetries,
+    onBatchRetry: (batchIndex, attempt, error) =>
+      deps.stderr.write(
+        `  batch ${batchIndex} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+      ),
     progressCallback: (current, total) =>
       deps.stderr.write(`processing batch ${current}/${total}\n`),
   })
@@ -528,7 +634,14 @@ async function runReviewJson(
 
   const chunks = chunkEntries(remaining, args.batchSize)
   const totalBatches = chunks.length
-  deps.stderr.write(startupInfo(args, inputEntries.length, totalBatches) + "\n")
+  deps.stderr.write(
+    startupInfo(
+      args,
+      inputEntries.length,
+      Math.ceil(inputEntries.length / args.batchSize),
+      checkpointEntries.length > 0,
+    ) + "\n",
+  )
 
   for (const [index, chunk] of chunks.entries()) {
     const currentBatch = index + 1
@@ -542,6 +655,11 @@ async function runReviewJson(
       batchIndex: currentBatch,
       totalBatches,
       stdinEndToken: args.stdinEndToken,
+      maxRetries: args.maxRetries,
+      onRetry: (attempt, error) =>
+        deps.stderr.write(
+          `  batch ${currentBatch} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+        ),
     })
     chunk.forEach((entry, i) => {
       checkpointEntries.push({
@@ -591,7 +709,14 @@ async function runReviewCsv3(
 
   const chunks = chunkEntries(remaining, args.batchSize)
   const totalBatches = chunks.length
-  deps.stderr.write(startupInfo(args, inputEntries.length, totalBatches) + "\n")
+  deps.stderr.write(
+    startupInfo(
+      args,
+      inputEntries.length,
+      Math.ceil(inputEntries.length / args.batchSize),
+      checkpointEntries.length > 0,
+    ) + "\n",
+  )
 
   for (const [index, chunk] of chunks.entries()) {
     const currentBatch = index + 1
@@ -605,6 +730,11 @@ async function runReviewCsv3(
       batchIndex: currentBatch,
       totalBatches,
       stdinEndToken: args.stdinEndToken,
+      maxRetries: args.maxRetries,
+      onRetry: (attempt, error) =>
+        deps.stderr.write(
+          `  batch ${currentBatch} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+        ),
     })
     chunk.forEach((entry, i) => {
       checkpointEntries.push({
@@ -652,7 +782,9 @@ async function runReviewPlain(
     "Return each line unchanged if it is acceptable."
 
   const totalBatches = Math.ceil(outputLines.length / args.batchSize)
-  deps.stderr.write(startupInfo(args, outputLines.length, totalBatches) + "\n")
+  deps.stderr.write(
+    startupInfo(args, outputLines.length, totalBatches, false) + "\n",
+  )
 
   const reviewed = await deps.translateBatches({
     lines: outputLines,
@@ -662,6 +794,11 @@ async function runReviewPlain(
     command,
     timeoutSeconds: args.timeoutSeconds,
     stdinEndToken: args.stdinEndToken,
+    maxRetries: args.maxRetries,
+    onBatchRetry: (batchIndex, attempt, error) =>
+      deps.stderr.write(
+        `  batch ${batchIndex} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+      ),
     progressCallback: (current, total) =>
       deps.stderr.write(`processing batch ${current}/${total}\n`),
   })
@@ -675,7 +812,16 @@ export async function main(
   partialDeps: Partial<CliDeps> = {},
 ): Promise<number> {
   const deps: CliDeps = { ...defaultDeps, ...partialDeps }
-  const args = parseArgs(argv)
+  let args: CliArgs
+  try {
+    args = parseArgs(argv)
+  } catch (e) {
+    if (e instanceof HelpRequestedError) {
+      process.stdout.write(HELP_TEXT)
+      return 0
+    }
+    throw e
+  }
   if (args.setupContextFile) {
     args.setupContext = deps.readFile(args.setupContextFile)
     if (!args.setupContext.trim()) {
@@ -711,7 +857,14 @@ export async function main(
     }
 
     const totalBatches = chunks.length
-    deps.stderr.write(startupInfo(args, entries.length, totalBatches) + "\n")
+    deps.stderr.write(
+      startupInfo(
+        args,
+        entries.length,
+        Math.ceil(entries.length / args.batchSize),
+        translatedEntries.length > 0,
+      ) + "\n",
+    )
 
     for (const [index, chunk] of chunks.entries()) {
       const currentBatch = index + 1
@@ -724,6 +877,11 @@ export async function main(
         batchIndex: currentBatch,
         totalBatches,
         stdinEndToken: args.stdinEndToken,
+        maxRetries: args.maxRetries,
+        onRetry: (attempt, error) =>
+          deps.stderr.write(
+            `  batch ${currentBatch} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+          ),
       })
 
       chunk.forEach((entry, sentence) => {
@@ -764,7 +922,14 @@ export async function main(
     }
 
     const totalBatches = chunks.length
-    deps.stderr.write(startupInfo(args, entries.length, totalBatches) + "\n")
+    deps.stderr.write(
+      startupInfo(
+        args,
+        entries.length,
+        Math.ceil(entries.length / args.batchSize),
+        translatedEntries.length > 0,
+      ) + "\n",
+    )
 
     for (const [index, chunk] of chunks.entries()) {
       const currentBatch = index + 1
@@ -777,6 +942,11 @@ export async function main(
         batchIndex: currentBatch,
         totalBatches,
         stdinEndToken: args.stdinEndToken,
+        maxRetries: args.maxRetries,
+        onRetry: (attempt, error) =>
+          deps.stderr.write(
+            `  batch ${currentBatch} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+          ),
       })
 
       chunk.forEach((entry, i) => {
@@ -814,7 +984,7 @@ export async function main(
 
   const totalPlainBatches = Math.ceil(contentLines.length / args.batchSize)
   deps.stderr.write(
-    startupInfo(args, contentLines.length, totalPlainBatches) + "\n",
+    startupInfo(args, contentLines.length, totalPlainBatches, false) + "\n",
   )
 
   const translated = await deps.translateBatches({
@@ -824,6 +994,11 @@ export async function main(
     command,
     timeoutSeconds: args.timeoutSeconds,
     stdinEndToken: args.stdinEndToken,
+    maxRetries: args.maxRetries,
+    onBatchRetry: (batchIndex, attempt, error) =>
+      deps.stderr.write(
+        `  batch ${batchIndex} failed, retrying (${attempt}/${args.maxRetries}): ${error.message}\n`,
+      ),
     progressCallback: (current, total) =>
       deps.stderr.write(`processing batch ${current}/${total}\n`),
   })

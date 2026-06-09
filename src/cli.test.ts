@@ -5,7 +5,13 @@ import { Writable } from "node:stream"
 
 import { afterEach, describe, expect, it } from "vitest"
 
-import { buildPiCommand, main, parseArgs } from "./cli"
+import {
+  HELP_TEXT,
+  HelpRequestedError,
+  buildPiCommand,
+  main,
+  parseArgs,
+} from "./cli"
 import { flattenJson, parseCsvEntries, serializeCsvEntries } from "./io"
 import { translateBatches } from "./translator"
 import type { TranslationEntry } from "./types"
@@ -93,6 +99,91 @@ describe("build command", () => {
     })
 
     expect(command).toEqual(["stdout"])
+  })
+})
+
+describe("help flag", () => {
+  it("--help throws HelpRequestedError", () => {
+    expect(() => parseArgs(["--help"])).toThrow(HelpRequestedError)
+  })
+
+  it("-h throws HelpRequestedError", () => {
+    expect(() => parseArgs(["-h"])).toThrow(HelpRequestedError)
+  })
+
+  it("--help takes precedence over missing required args", () => {
+    expect(() => parseArgs(["--help"])).toThrow(HelpRequestedError)
+  })
+
+  it("--help mixed with other flags still throws HelpRequestedError", () => {
+    expect(() =>
+      parseArgs(["in.txt", "out.txt", "--setup-context", "ctx", "--help"]),
+    ).toThrow(HelpRequestedError)
+  })
+
+  it("HELP_TEXT contains all flags", () => {
+    const flags = [
+      "--setup-context",
+      "--setup-context-file",
+      "--batch-size",
+      "--input-format",
+      "--mode",
+      "--timeout-seconds",
+      "--pi-cmd",
+      "--pi-mono-cmd",
+      "--provider",
+      "--model",
+      "--api-key",
+      "--stdin-end-token",
+      "--help",
+    ]
+    for (const flag of flags) {
+      expect(HELP_TEXT).toContain(flag)
+    }
+  })
+
+  it("HELP_TEXT lists all --input-format values", () => {
+    expect(HELP_TEXT).toContain("plain")
+    expect(HELP_TEXT).toContain("csv3")
+    expect(HELP_TEXT).toContain("json")
+  })
+
+  it("HELP_TEXT lists all --mode values", () => {
+    expect(HELP_TEXT).toContain("translate")
+    expect(HELP_TEXT).toContain("missing")
+    expect(HELP_TEXT).toContain("review")
+  })
+
+  it("main prints HELP_TEXT to stdout and returns 0 for --help", async () => {
+    const written: string[] = []
+    const origWrite = process.stdout.write.bind(process.stdout)
+    process.stdout.write = (chunk: string | Uint8Array) => {
+      written.push(chunk.toString())
+      return true
+    }
+    try {
+      const code = await main(["--help"])
+      expect(code).toBe(0)
+      expect(written.join("")).toBe(HELP_TEXT)
+    } finally {
+      process.stdout.write = origWrite
+    }
+  })
+
+  it("main prints HELP_TEXT to stdout and returns 0 for -h", async () => {
+    const written: string[] = []
+    const origWrite = process.stdout.write.bind(process.stdout)
+    process.stdout.write = (chunk: string | Uint8Array) => {
+      written.push(chunk.toString())
+      return true
+    }
+    try {
+      const code = await main(["-h"])
+      expect(code).toBe(0)
+      expect(written.join("")).toBe(HELP_TEXT)
+    } finally {
+      process.stdout.write = origWrite
+    }
   })
 })
 

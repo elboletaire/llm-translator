@@ -21,4 +21,5 @@ export interface CliArgs {
   model?: string
   apiKey?: string
   stdinEndToken: string
+  maxRetries: number
 }

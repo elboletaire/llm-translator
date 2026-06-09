@@ -63,6 +63,8 @@ export async function translateBatches(params: {
   command: string[]
   timeoutSeconds: number
   progressCallback?: (current: number, total: number) => void
+  onBatchRetry?: (batchIndex: number, attempt: number, error: Error) => void
+  maxRetries?: number
   stdinEndToken?: string
   instruction?: string
   exchange?: ExchangeFn
@@ -75,6 +77,8 @@ export async function translateBatches(params: {
     command,
     timeoutSeconds,
     progressCallback,
+    onBatchRetry,
+    maxRetries = 0,
     stdinEndToken = "__NEXT_BATCH__",
     instruction,
     exchange = exchangeWithProvider,
@@ -95,13 +99,26 @@ export async function translateBatches(params: {
       allChunks.length,
       instruction,
     )
-    const rawOutput = await exchange({
-      prompt,
-      command,
-      timeoutSeconds,
-      io,
-      stdinEndToken,
-    })
+    let lastError: Error = new Error("unknown error")
+    let rawOutput: string | null = null
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      try {
+        rawOutput = await exchange({
+          prompt,
+          command,
+          timeoutSeconds,
+          io,
+          stdinEndToken,
+        })
+        break
+      } catch (e) {
+        lastError = e instanceof Error ? e : new Error(String(e))
+        if (attempt < maxRetries) {
+          onBatchRetry?.(chunkIndex, attempt + 1, lastError)
+        }
+      }
+    }
+    if (rawOutput === null) throw lastError
     translated.push(...splitKeepNewlines(stripMarkdownFences(rawOutput)))
   }
 
@@ -160,6 +177,8 @@ export async function translateTextUnitsBatch(params: {
   timeoutSeconds: number
   batchIndex: number
   totalBatches: number
+  maxRetries?: number
+  onRetry?: (attempt: number, error: Error) => void
   stdinEndToken?: string
   exchange?: ExchangeFn
   io?: ExchangeIo
@@ -171,6 +190,8 @@ export async function translateTextUnitsBatch(params: {
     timeoutSeconds,
     batchIndex,
     totalBatches,
+    maxRetries = 0,
+    onRetry,
     stdinEndToken = "__NEXT_BATCH__",
     exchange = exchangeWithProvider,
     io,
@@ -196,19 +217,31 @@ export async function translateTextUnitsBatch(params: {
     `Setup context:\n${setupContext.trim()}\n\n` +
     `Entries:\n${JSON.stringify(payload)}\n`
 
-  const rawOutput = await exchange({
-    prompt,
-    command,
-    timeoutSeconds,
-    io,
-    stdinEndToken,
-  })
-
-  const parsed = parseBatchOutput(rawOutput)
-  if (parsed.length !== entries.length) {
-    throw new Error("model returned unexpected number of translated entries")
+  let lastError: Error = new Error("unknown error")
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const rawOutput = await exchange({
+        prompt,
+        command,
+        timeoutSeconds,
+        io,
+        stdinEndToken,
+      })
+      const parsed = parseBatchOutput(rawOutput)
+      if (parsed.length !== entries.length) {
+        throw new Error(
+          "model returned unexpected number of translated entries",
+        )
+      }
+      return normalizeBatchItems(parsed, rawOutput, entries)
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e))
+      if (attempt < maxRetries) {
+        onRetry?.(attempt + 1, lastError)
+      }
+    }
   }
-  return normalizeBatchItems(parsed, rawOutput, entries)
+  throw lastError
 }
 
 export async function translateTextUnitsBatchReview(params: {
@@ -219,6 +252,8 @@ export async function translateTextUnitsBatchReview(params: {
   timeoutSeconds: number
   batchIndex: number
   totalBatches: number
+  maxRetries?: number
+  onRetry?: (attempt: number, error: Error) => void
   stdinEndToken?: string
   exchange?: ExchangeFn
   io?: ExchangeIo
@@ -231,6 +266,8 @@ export async function translateTextUnitsBatchReview(params: {
     timeoutSeconds,
     batchIndex,
     totalBatches,
+    maxRetries = 0,
+    onRetry,
     stdinEndToken = "__NEXT_BATCH__",
     exchange = exchangeWithProvider,
     io,
@@ -261,19 +298,29 @@ export async function translateTextUnitsBatchReview(params: {
     `Setup context:\n${setupContext.trim()}\n\n` +
     `Entries (original + current translation):\n${JSON.stringify(payload)}\n`
 
-  const rawOutput = await exchange({
-    prompt,
-    command,
-    timeoutSeconds,
-    io,
-    stdinEndToken,
-  })
-
-  const parsed = parseBatchOutput(rawOutput)
-  if (parsed.length !== entries.length) {
-    throw new Error("model returned unexpected number of reviewed entries")
+  let lastError: Error = new Error("unknown error")
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    try {
+      const rawOutput = await exchange({
+        prompt,
+        command,
+        timeoutSeconds,
+        io,
+        stdinEndToken,
+      })
+      const parsed = parseBatchOutput(rawOutput)
+      if (parsed.length !== entries.length) {
+        throw new Error("model returned unexpected number of reviewed entries")
+      }
+      return normalizeBatchItems(parsed, rawOutput, entries)
+    } catch (e) {
+      lastError = e instanceof Error ? e : new Error(String(e))
+      if (attempt < maxRetries) {
+        onRetry?.(attempt + 1, lastError)
+      }
+    }
   }
-  return normalizeBatchItems(parsed, rawOutput, entries)
+  throw lastError
 }
 
 function parseBatchOutput(text: string): unknown[] {
@@ -479,12 +526,35 @@ function normalizeBatchItems(
         )
       }
 
-      for (const field of ["sentence", "translation", "text"]) {
+      for (const field of [
+        "sentence",
+        "translation",
+        "text",
+        "current",
+        "reviewed",
+      ]) {
         const value = itemRecord[field]
         if (typeof value === "string") {
           normalized.push(value)
           return
         }
+      }
+
+      // Fallback: pick any string value that isn't the key or the original source text
+      const originalSentence =
+        index < expectedEntries.length ? expectedEntries[index].sentence : ""
+      const stringValues = Object.values(itemRecord).filter(
+        (v): v is string =>
+          typeof v === "string" && v !== expectedKey && v !== originalSentence,
+      )
+      if (stringValues.length === 1) {
+        normalized.push(stringValues[0])
+        return
+      }
+      if (stringValues.length > 1) {
+        // Take the last string value — models tend to put the translation last
+        normalized.push(stringValues[stringValues.length - 1])
+        return
       }
     }
 
