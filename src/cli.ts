@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import { fileURLToPath } from "node:url"
 
 import {
   flattenJson,
@@ -1022,9 +1023,22 @@ export async function main(
   return 0
 }
 
-const isDirectExecution = process.argv[1]
-  ? import.meta.url === new URL(`file://${process.argv[1]}`).href
-  : false
+function isMainModule(): boolean {
+  const entry = process.argv[1]
+  if (!entry) return false
+  try {
+    // Resolve symlinks on both sides: when installed via npm the bin is a
+    // symlink (pi-translate -> .../dist/cli.js), so argv[1] is the symlink
+    // path while import.meta.url is the real file. Compare their realpaths.
+    return (
+      fs.realpathSync(entry) === fs.realpathSync(fileURLToPath(import.meta.url))
+    )
+  } catch {
+    return false
+  }
+}
+
+const isDirectExecution = isMainModule()
 
 if (isDirectExecution) {
   main().then(
