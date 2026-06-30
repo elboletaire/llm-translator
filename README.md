@@ -1,6 +1,6 @@
 # pi-translator
 
-Batch translator for large files using `pi`.
+Batch translator for large files using [`pi`](https://github.com/earendil-works/pi).
 
 ## What it does
 
@@ -19,10 +19,15 @@ Progress is printed to stderr as `processing batch X/Y`.
 - If execution fails, rerun the same command to resume
 - On success, output is finalized atomically via `<output_file>.tmp` rename, then `.part` is removed
 
+## Requirements
+
+- Node.js >= 18
+- [`pi`](https://github.com/earendil-works/pi) installed and available in your `PATH`
+
 ## Install
 
 ```bash
-pnpm install
+npm install -g pi-translator
 ```
 
 ## Usage
@@ -30,28 +35,38 @@ pnpm install
 Plain text mode:
 
 ```bash
-pnpm start -- input.txt output.txt \
+pi-translate input.txt output.txt \
   --setup-context "Translate from Spanish to English. Keep character names unchanged." \
   --provider openai \
-  --model gpt-5.4 \
+  --model gpt-4o \
   --batch-size 40
 ```
 
 CSV mode (`key,text,context`):
 
 ```bash
-pnpm start -- input.csv output.csv \
+pi-translate input.csv output.csv \
   --input-format csv3 \
   --setup-context "Translate column 2 to English. Keep key and context untouched." \
   --provider github-copilot \
-  --model claude-sonnet-4.5 \
+  --model claude-sonnet-4-5 \
   --batch-size 25
+```
+
+JSON mode:
+
+```bash
+pi-translate input.json output.json \
+  --setup-context "Translate all string values from Spanish to English." \
+  --provider openai \
+  --model gpt-4o \
+  --batch-size 30
 ```
 
 Manual mode (`stdout` provider, no API credits):
 
 ```bash
-pnpm start -- input.csv output.csv \
+pi-translate input.csv output.csv \
   --input-format csv3 \
   --provider stdout \
   --batch-size 25 \
@@ -64,22 +79,33 @@ Finish each response with the end token on its own line (example: `<NEXT>`).
 
 ## Options
 
-- `--setup-context` (required): fixed translation instructions for every batch
-- `--batch-size` (default: `50`): lines per batch (or CSV rows per API call in `csv3`)
-- `--input-format` (default: `plain`): `plain` or `csv3`
-- `--timeout-seconds` (default: `120`): timeout per `pi` call
-- `--pi-cmd` (default: `pi`): command used to invoke pi
-- `--provider`: provider id passed to pi
-- `--model`: model id passed to pi
-- `--api-key`: optional API key passed to pi
-- `--stdin-end-token` (default: `__NEXT_BATCH__`): used only with `--provider stdout`
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--setup-context <text>` | _(required)_ | Fixed translation instructions for every batch (mutually exclusive with `--setup-context-file`) |
+| `--setup-context-file <path>` | _(required)_ | File containing the translation instructions |
+| `--batch-size <n>` | `50` | Lines per batch (or CSV/JSON rows per API call) |
+| `--input-format <fmt>` | `plain` | `plain`, `csv3`, or `json` (auto-detected from file extension) |
+| `--mode <mode>` | `translate` | `translate`, `missing` (only empty/absent rows), or `review` |
+| `--timeout-seconds <n>` | `120` | Timeout per `pi` call |
+| `--pi-cmd <cmd>` | `pi` | Command used to invoke pi |
+| `--provider <id>` | | Provider ID passed to pi (e.g. `openai`, `github-copilot`) |
+| `--model <id>` | | Model ID passed to pi |
+| `--api-key <key>` | | API key passed to pi |
+| `--allow-extensions` | | Keep pi extension discovery enabled (needed for extension-registered providers) |
+| `--stdin-end-token <token>` | `__NEXT_BATCH__` | Used only with `--provider stdout` |
 
 Compatibility alias: `--pi-mono-cmd` is accepted and mapped to `--pi-cmd`.
+
+## License
+
+[GPL-3.0](./LICENSE) © Òscar Casajuana
 
 ## Development
 
 ```bash
+pnpm install
 pnpm test
 pnpm build
 pnpm format
 ```
+

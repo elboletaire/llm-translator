@@ -1,12 +1,25 @@
 {
   "name": "pi-translator",
   "version": "0.1.0",
-  "private": true,
+  "description": "Batch translator for large files using pi",
   "type": "module",
+  "license": "GPL-3.0-only",
+  "author": "Òscar Casajuana <elboletaire@gmail.com>",
+  "homepage": "https://github.com/elboletaire/pi-translator",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/elboletaire/pi-translator.git"
+  },
+  "keywords": ["translator", "batch", "llm", "pi", "csv", "json", "localization", "i18n"],
+  "files": ["dist/", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "bin": {
     "pi-translate": "dist/cli.js"
   },
   "scripts": {
+    "prepublishOnly": "pnpm build",
     "build": "tsup && node scripts/postbuild.mjs",
     "start": "tsx src/cli.ts",
     "test": "vitest run",
